@@ -449,33 +449,127 @@ def generate_html(data):
     return templates.get(template, templates["minimal"])
 
 
-def generate_with_ai(prompt, api_key, model="gpt-3.5-turbo"):
+AI_PROVIDERS = {
+    "openai": {
+        "name": "OpenAI",
+        "models": ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
+        "url": "https://api.openai.com/v1/chat/completions",
+        "key_label": "OpenAI API Key",
+        "key_help": "Získejte na platform.openai.com",
+    },
+    "gemini": {
+        "name": "Google Gemini",
+        "models": ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        "key_label": "Google AI API Key",
+        "key_help": "Získejte na aistudio.google.com/apikey",
+    },
+    "openrouter": {
+        "name": "OpenRouter",
+        "models": [
+            "anthropic/claude-3-haiku",
+            "anthropic/claude-3-sonnet",
+            "google/gemini-pro",
+            "meta-llama/llama-3-8b-instruct",
+            "mistralai/mistral-7b-instruct",
+        ],
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "key_label": "OpenRouter API Key",
+        "key_help": "Získejte na openrouter.ai/keys",
+    },
+    "ollama": {
+        "name": "Ollama Cloud",
+        "models": ["llama3.2", "llama3.1", "mistral", "codellama", "phi3"],
+        "url": "https://ollama.com/api/chat",
+        "key_label": "Ollama API Key",
+        "key_help": "Získejte na ollama.com/settings",
+    },
+}
+
+
+def generate_with_ai(prompt, provider, api_key, model):
     try:
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-        data = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "Jsi expert na psaní bio textů a popisů projektů pro portfolia.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.7,
-        }
-        response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers=headers,
-            json=data,
-            timeout=30,
-        )
-        if response.status_code == 200:
-            return response.json()["choices"][0]["message"]["content"]
+        system_prompt = "Jsi expert na psaní bio textů a popisů projektů pro portfolia. Piš v češtině, buď stručný a profesionální."
+
+        if provider == "gemini":
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+            data = {
+                "contents": [{"parts": [{"text": f"{system_prompt}\n\n{prompt}"}]}],
+                "generationConfig": {"temperature": 0.7, "maxOutputTokens": 500},
+            }
+            response = requests.post(url, json=data, timeout=30)
+            if response.status_code == 200:
+                return response.json()["candidates"][0]["content"]["parts"][0]["text"]
+            else:
+                return f"Error: {response.status_code} - {response.text}"
+
+        elif provider == "openrouter":
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://portfolio-generator.streamlit.app",
+                "X-Title": "Portfolio Generator",
+            }
+            data = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.7,
+            }
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=30,
+            )
+            if response.status_code == 200:
+                return response.json()["choices"][0]["message"]["content"]
+            else:
+                return f"Error: {response.status_code} - {response.text}"
+
+        elif provider == "ollama":
+            data = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                "stream": False,
+            }
+            response = requests.post(
+                "https://ollama.com/api/chat", json=data, timeout=60
+            )
+            if response.status_code == 200:
+                return response.json()["message"]["content"]
+            else:
+                return f"Error: {response.status_code} - {response.text}"
+
         else:
-            return f"Error: {response.status_code} - {response.text}"
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            data = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.7,
+            }
+            response = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=30,
+            )
+            if response.status_code == 200:
+                return response.json()["choices"][0]["message"]["content"]
+            else:
+                return f"Error: {response.status_code} - {response.text}"
+
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -492,7 +586,9 @@ if "data" not in st.session_state:
         "template": "minimal",
         "color": "#58a6ff",
     }
-    st.session_state.api_key = ""
+    st.session_state.ai_provider = "openai"
+    st.session_state.ai_model = "gpt-4o-mini"
+    st.session_state.ai_api_key = ""
 
 st.title("🎨 Portfolio Generator")
 
@@ -525,20 +621,44 @@ with st.sidebar:
     st.divider()
 
     st.subheader("🤖 AI Generování")
-    st.session_state.api_key = st.text_input(
-        "OpenAI API Key",
-        type="password",
-        help="Pro AI generování potřebujete API key z platform.openai.com",
-    )
 
-    if st.session_state.api_key:
+    provider = st.selectbox(
+        "Poskytovatel",
+        list(AI_PROVIDERS.keys()),
+        format_func=lambda x: AI_PROVIDERS[x]["name"],
+        index=list(AI_PROVIDERS.keys()).index(st.session_state.ai_provider)
+        if st.session_state.ai_provider in AI_PROVIDERS
+        else 0,
+        key="ai_provider_select",
+    )
+    st.session_state.ai_provider = provider
+
+    model = st.selectbox(
+        "Model", AI_PROVIDERS[provider]["models"], key="ai_model_select"
+    )
+    st.session_state.ai_model = model
+
+    api_key = st.text_input(
+        AI_PROVIDERS[provider]["key_label"],
+        type="password",
+        help=AI_PROVIDERS[provider]["key_help"],
+        key="ai_api_key_input",
+    )
+    st.session_state.ai_api_key = api_key
+
+    if st.session_state.ai_api_key:
         with st.expander("✨ AI Akce"):
             if st.button("🧙‍♂️ Generovat Bio", use_container_width=True):
                 with st.spinner("Generuji..."):
                     name = st.session_state.data.get("name", "vývojář")
                     title = st.session_state.data.get("title", "")
-                    prompt = f"Napiš krátké a poutavé bio (2-3 věty) pro portfolio {name}, {title}. Použij profesionální tón, alebuďtrochu kreativní. V češtině."
-                    result = generate_with_ai(prompt, st.session_state.api_key)
+                    prompt = f"Napiš krátké a poutavé bio (2-3 věty) pro portfolio {name}, {title}. Použij profesionální tón, ale buď trochu kreativní. V češtině."
+                    result = generate_with_ai(
+                        prompt,
+                        st.session_state.ai_provider,
+                        st.session_state.ai_api_key,
+                        st.session_state.ai_model,
+                    )
                     if not result.startswith("Error"):
                         st.session_state.data["bio"] = result
                         st.rerun()
@@ -552,6 +672,7 @@ with st.sidebar:
                     p.get("name", f"Projekt {i}")
                     for i, p in enumerate(st.session_state.data.get("projects", []))
                 ],
+                key="ai_project_select",
             )
             if ai_project != "(vyberte)" and st.button(
                 "📝 AI Popis projektu", use_container_width=True
@@ -562,8 +683,13 @@ with st.sidebar:
                         for i, p in enumerate(st.session_state.data.get("projects", []))
                     ].index(ai_project)
                     project = st.session_state.data["projects"][idx]
-                    prompt = f"Napiš krátký a výstižný popis projektu '{project.get('name', '')}'.Technologie: {project.get('tech', 'neuvedeny')}. Popis by měl být 1-2 věty, profesionální, v češtině."
-                    result = generate_with_ai(prompt, st.session_state.api_key)
+                    prompt = f"Napiš krátký a výstižný popis projektu '{project.get('name', '')}'. Technologie: {project.get('tech', 'neuvedeny')}. Popis by měl být 1-2 věty, profesionální, v češtině."
+                    result = generate_with_ai(
+                        prompt,
+                        st.session_state.ai_provider,
+                        st.session_state.ai_api_key,
+                        st.session_state.ai_model,
+                    )
                     if not result.startswith("Error"):
                         st.session_state.data["projects"][idx]["description"] = result
                         st.rerun()
