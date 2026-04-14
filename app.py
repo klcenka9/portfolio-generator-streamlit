@@ -44,6 +44,11 @@ def get_social_icon(platform):
     return icons.get(platform, "🔗")
 
 
+def hex_to_rgb(hex_color):
+    hex_color = hex_color.lstrip("#")
+    return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+
+
 def generate_html(data):
     name = data.get("name", "Vaše jméno")
     title = data.get("title", "Profese")
@@ -54,6 +59,7 @@ def generate_html(data):
     projects = data.get("projects", [])
     template = data.get("template", "minimal")
     color = data.get("color", "#58a6ff")
+    color_rgb = hex_to_rgb(color)
 
     social_html = ""
     for s in social:
@@ -355,7 +361,7 @@ def generate_html(data):
         .container {{ max-width: 800px; margin: 0 auto; }}
         .name {{ font-family: 'Orbitron', sans-serif; font-size: 3rem; font-weight: 700; text-transform: uppercase; margin-bottom: 8px; text-shadow: 0 0 10px {color}, 0 0 20px {color}, 0 0 40px {color}; }}
         .title {{ font-size: 1.25rem; color: {color}; margin-bottom: 24px; text-transform: uppercase; letter-spacing: 4px; }}
-        .bio {{ color: #888; line-height: 1.8; margin-bottom: 24px; padding: 20px; border-left: 3px solid {color}; background: rgba({color.replace('#','').[:2]}, {color.replace('#','')[2:4]}, {color.replace('#','')[4:6]}, 0.1); }}
+        .bio {{ color: #888; line-height: 1.8; margin-bottom: 24px; padding: 20px; border-left: 3px solid {color}; background: rgba({color_rgb[0]}, {color_rgb[1]}, {color_rgb[2]}, 0.1); }}
         .info {{ display: flex; gap: 24px; margin-bottom: 24px; font-size: 14px; color: #666; }}
         .social {{ display: flex; gap: 16px; margin-bottom: 40px; font-size: 24px; }}
         .social a {{ width: 48px; height: 48px; border: 2px solid {color}; display: flex; align-items: center; justify-content: center; transition: all 0.3s; }}
@@ -452,8 +458,11 @@ def generate_with_ai(prompt, api_key, model="gpt-3.5-turbo"):
         data = {
             "model": model,
             "messages": [
-                {"role": "system", "content": "Jsi expert na psaní bio textů a popisů projektů pro portfolia."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": "Jsi expert na psaní bio textů a popisů projektů pro portfolia.",
+                },
+                {"role": "user", "content": prompt},
             ],
             "temperature": 0.7,
         }
@@ -461,7 +470,7 @@ def generate_with_ai(prompt, api_key, model="gpt-3.5-turbo"):
             "https://api.openai.com/v1/chat/completions",
             headers=headers,
             json=data,
-            timeout=30
+            timeout=30,
         )
         if response.status_code == 200:
             return response.json()["choices"][0]["message"]["content"]
@@ -489,7 +498,7 @@ st.title("🎨 Portfolio Generator")
 
 with st.sidebar:
     st.header("⚙️ Nastavení")
-    
+
     st.subheader("💾 Uložení/Načtení")
     col1, col2 = st.columns(2)
     with col1:
@@ -500,7 +509,7 @@ with st.sidebar:
                 json_str,
                 file_name="portfolio-config.json",
                 mime="application/json",
-                key="download_json"
+                key="download_json",
             )
     with col2:
         uploaded = st.file_uploader("📂 Načíst", type="json", key="upload_json")
@@ -512,16 +521,16 @@ with st.sidebar:
                 st.rerun()
             except:
                 st.error("❌ Chyba při načítání")
-    
+
     st.divider()
-    
+
     st.subheader("🤖 AI Generování")
     st.session_state.api_key = st.text_input(
         "OpenAI API Key",
         type="password",
-        help="Pro AI generování potřebujete API key z platform.openai.com"
+        help="Pro AI generování potřebujete API key z platform.openai.com",
     )
-    
+
     if st.session_state.api_key:
         with st.expander("✨ AI Akce"):
             if st.button("🧙‍♂️ Generovat Bio", use_container_width=True):
@@ -535,14 +544,23 @@ with st.sidebar:
                         st.rerun()
                     else:
                         st.error(result)
-            
+
             ai_project = st.selectbox(
                 "Projekt pro AI popis",
-                ["(vyberte)"] + [p.get("name", f"Projekt {i}") for i, p in enumerate(st.session_state.data.get("projects", []))]
+                ["(vyberte)"]
+                + [
+                    p.get("name", f"Projekt {i}")
+                    for i, p in enumerate(st.session_state.data.get("projects", []))
+                ],
             )
-            if ai_project != "(vyberte)" and st.button("📝 AI Popis projektu", use_container_width=True):
+            if ai_project != "(vyberte)" and st.button(
+                "📝 AI Popis projektu", use_container_width=True
+            ):
                 with st.spinner("Generuji..."):
-                    idx = [p.get("name", f"Projekt {i}") for i, p in enumerate(st.session_state.data.get("projects", []))].index(ai_project)
+                    idx = [
+                        p.get("name", f"Projekt {i}")
+                        for i, p in enumerate(st.session_state.data.get("projects", []))
+                    ].index(ai_project)
                     project = st.session_state.data["projects"][idx]
                     prompt = f"Napiš krátký a výstižný popis projektu '{project.get('name', '')}'.Technologie: {project.get('tech', 'neuvedeny')}. Popis by měl být 1-2 věty, profesionální, v češtině."
                     result = generate_with_ai(prompt, st.session_state.api_key)
@@ -562,7 +580,9 @@ with tab1:
     st.session_state.data["title"] = st.text_input(
         "Titulek / Profese", st.session_state.data["title"]
     )
-    st.session_state.data["bio"] = st.text_area("Bio", st.session_state.data["bio"], height=100)
+    st.session_state.data["bio"] = st.text_area(
+        "Bio", st.session_state.data["bio"], height=100
+    )
     st.session_state.data["location"] = st.text_input(
         "Lokace", st.session_state.data["location"]
     )
@@ -575,7 +595,16 @@ with tab1:
     with col1:
         platform = st.selectbox(
             "Platforma",
-            ["github", "linkedin", "twitter", "website", "email", "instagram", "youtube", "discord"],
+            [
+                "github",
+                "linkedin",
+                "twitter",
+                "website",
+                "email",
+                "instagram",
+                "youtube",
+                "discord",
+            ],
             key="social_platform",
         )
     with col2:
@@ -614,7 +643,7 @@ with tab2:
                 try:
                     response = requests.get(
                         f"https://api.github.com/users/{github_user}/repos?sort=updated&per_page=20",
-                        timeout=10
+                        timeout=10,
                     )
                     if response.status_code == 200:
                         repos = response.json()
@@ -624,12 +653,15 @@ with tab2:
                                 st.session_state.data["projects"].append(
                                     {
                                         "name": repo.get("name", ""),
-                                        "description": repo.get("description", "") or "",
+                                        "description": repo.get("description", "")
+                                        or "",
                                         "url": repo.get("html_url", ""),
                                         "tech": "",
                                     }
                                 )
-                        st.success(f"✅ Importováno {len(st.session_state.data['projects'])} repozitářů!")
+                        st.success(
+                            f"✅ Importováno {len(st.session_state.data['projects'])} repozitářů!"
+                        )
                         st.rerun()
                     else:
                         st.error("❌ Uživatel nenalezen")
@@ -668,8 +700,11 @@ with tab2:
                 with col1:
                     if st.button("⬆️ Nahoru", key=f"up_proj_{i}"):
                         if i > 0:
-                            st.session_state.data["projects"][i], st.session_state.data["projects"][i-1] = (
-                                st.session_state.data["projects"][i-1],
+                            (
+                                st.session_state.data["projects"][i],
+                                st.session_state.data["projects"][i - 1],
+                            ) = (
+                                st.session_state.data["projects"][i - 1],
                                 st.session_state.data["projects"][i],
                             )
                             st.rerun()
@@ -710,7 +745,10 @@ with tab3:
     with col2:
         st.metric("Sítě", len(st.session_state.data.get("social", [])))
     with col3:
-        st.metric("Šablona", TEMPLATES.get(st.session_state.data.get("template", "minimal"), ""))
+        st.metric(
+            "Šablona",
+            TEMPLATES.get(st.session_state.data.get("template", "minimal"), ""),
+        )
 
 st.divider()
 
@@ -725,7 +763,7 @@ with col1:
         file_name="portfolio.html",
         mime="text/html",
         type="primary",
-        use_container_width=True
+        use_container_width=True,
     )
 with col2:
     json_str = json.dumps(st.session_state.data, ensure_ascii=False, indent=2)
@@ -734,7 +772,7 @@ with col2:
         json_str,
         file_name="portfolio-config.json",
         mime="application/json",
-        use_container_width=True
+        use_container_width=True,
     )
 with col3:
     b64 = base64.b64encode(html_output.encode()).decode()
