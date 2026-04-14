@@ -620,7 +620,7 @@ with st.sidebar:
 
     st.divider()
 
-    st.subheader("🤖 AI Generování")
+    st.subheader("🤖 AI Chat")
 
     provider = st.selectbox(
         "Poskytovatel",
@@ -646,55 +646,273 @@ with st.sidebar:
     )
     st.session_state.ai_api_key = api_key
 
-    if st.session_state.ai_api_key:
-        with st.expander("✨ AI Akce"):
-            if st.button("🧙‍♂️ Generovat Bio", use_container_width=True):
-                with st.spinner("Generuji..."):
-                    name = st.session_state.data.get("name", "vývojář")
-                    title = st.session_state.data.get("title", "")
-                    prompt = f"Napiš krátké a poutavé bio (2-3 věty) pro portfolio {name}, {title}. Použij profesionální tón, ale buď trochu kreativní. V češtině."
-                    result = generate_with_ai(
-                        prompt,
-                        st.session_state.ai_provider,
-                        st.session_state.ai_api_key,
-                        st.session_state.ai_model,
-                    )
-                    if not result.startswith("Error"):
-                        st.session_state.data["bio"] = result
-                        st.rerun()
-                    else:
-                        st.error(result)
+    if "ai_messages" not in st.session_state:
+        st.session_state.ai_messages = []
 
-            ai_project = st.selectbox(
-                "Projekt pro AI popis",
-                ["(vyberte)"]
-                + [
-                    p.get("name", f"Projekt {i}")
-                    for i, p in enumerate(st.session_state.data.get("projects", []))
-                ],
-                key="ai_project_select",
-            )
-            if ai_project != "(vyberte)" and st.button(
-                "📝 AI Popis projektu", use_container_width=True
-            ):
-                with st.spinner("Generuji..."):
-                    idx = [
-                        p.get("name", f"Projekt {i}")
-                        for i, p in enumerate(st.session_state.data.get("projects", []))
-                    ].index(ai_project)
-                    project = st.session_state.data["projects"][idx]
-                    prompt = f"Napiš krátký a výstižný popis projektu '{project.get('name', '')}'. Technologie: {project.get('tech', 'neuvedeny')}. Popis by měl být 1-2 věty, profesionální, v češtině."
-                    result = generate_with_ai(
-                        prompt,
-                        st.session_state.ai_provider,
-                        st.session_state.ai_api_key,
-                        st.session_state.ai_model,
+    if st.session_state.ai_api_key:
+        for msg in st.session_state.ai_messages:
+            if msg["role"] == "user":
+                st.chat_message("user").write(msg["content"])
+            else:
+                st.chat_message("assistant").write(msg["content"])
+
+        if prompt := st.chat_input("Napište zprávu pro AI..."):
+            st.chat_message("user").write(prompt)
+            st.session_state.ai_messages.append({"role": "user", "content": prompt})
+
+            with st.chat_message("assistant"):
+                with st.spinner("AI přemýšlí..."):
+                    current_data = {
+                        "name": st.session_state.data.get("name", ""),
+                        "title": st.session_state.data.get("title", ""),
+                        "bio": st.session_state.data.get("bio", ""),
+                        "location": st.session_state.data.get("location", ""),
+                        "email": st.session_state.data.get("email", ""),
+                        "projects": st.session_state.data.get("projects", []),
+                        "template": st.session_state.data.get("template", "minimal"),
+                        "color": st.session_state.data.get("color", "#58a6ff"),
+                    }
+
+                    system_prompt = f"""Jsi AI asistent pro úpravu portfolia. Můžeš měnit data v portfoliu na základě uživatelových požadavků.
+                    
+Aktuální stav portfolia:
+{json.dumps(current_data, ensure_ascii=False, indent=2)}
+
+Tvé úkoly:
+1. Odpověz uživateli na jeho otázku/požadavek
+2. Pokud chce uživatel změnit něco v portfoliu, proveď změnu a jasně napiš, co jsi změnil
+3. Můžeš měnit: jméno, titulek, bio, lokaci, email, projekty, šablonu, barvu
+4. Odpovídej v češtině
+
+Pokud provedeš změnu, vždy na konci odpovědi napiš ve formátu:
+[CHANGED]
+name: nové_jméno
+[/CHANGED]
+Nebo pro bio:
+[CHANGED]
+bio: nový_bio_text
+[/CHANGED]
+Nebo pro projekt:
+[CHANGED]
+project_0_description: nový_popis
+[/CHANGED]"""
+
+                    try:
+                        if provider == "gemini":
+                            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+                            data = {
+                                "contents": [
+                                    {
+                                        "parts": [
+                                            {
+                                                "text": f"{system_prompt}\n\nUživatel: {prompt}"
+                                            }
+                                        ]
+                                    }
+                                ],
+                                "generationConfig": {
+                                    "temperature": 0.7,
+                                    "maxOutputTokens": 1000,
+                                },
+                            }
+                            response = requests.post(url, json=data, timeout=60)
+                            if response.status_code == 200:
+                                ai_response = response.json()["candidates"][0][
+                                    "content"
+                                ]["parts"][0]["text"]
+                            else:
+                                ai_response = (
+                                    f"Error: {response.status_code} - {response.text}"
+                                )
+
+                        elif provider == "openrouter":
+                            headers = {
+                                "Authorization": f"Bearer {api_key}",
+                                "Content-Type": "application/json",
+                                "HTTP-Referer": "https://portfolio-generator.streamlit.app",
+                                "X-Title": "Portfolio Generator",
+                            }
+                            messages = [
+                                {"role": "system", "content": system_prompt}
+                            ] + st.session_state.ai_messages
+                            data = {
+                                "model": model,
+                                "messages": messages,
+                                "temperature": 0.7,
+                            }
+                            response = requests.post(
+                                "https://openrouter.ai/api/v1/chat/completions",
+                                headers=headers,
+                                json=data,
+                                timeout=60,
+                            )
+                            if response.status_code == 200:
+                                ai_response = response.json()["choices"][0]["message"][
+                                    "content"
+                                ]
+                            else:
+                                ai_response = (
+                                    f"Error: {response.status_code} - {response.text}"
+                                )
+
+                        elif provider == "ollama":
+                            messages = [
+                                {"role": "system", "content": system_prompt}
+                            ] + st.session_state.ai_messages
+                            data = {
+                                "model": model,
+                                "messages": messages,
+                                "stream": False,
+                            }
+                            response = requests.post(
+                                "https://ollama.com/api/chat", json=data, timeout=120
+                            )
+                            if response.status_code == 200:
+                                ai_response = response.json()["message"]["content"]
+                            else:
+                                ai_response = (
+                                    f"Error: {response.status_code} - {response.text}"
+                                )
+
+                        else:
+                            headers = {
+                                "Authorization": f"Bearer {api_key}",
+                                "Content-Type": "application/json",
+                            }
+                            messages = [
+                                {"role": "system", "content": system_prompt}
+                            ] + st.session_state.ai_messages
+                            data = {
+                                "model": model,
+                                "messages": messages,
+                                "temperature": 0.7,
+                            }
+                            response = requests.post(
+                                "https://api.openai.com/v1/chat/completions",
+                                headers=headers,
+                                json=data,
+                                timeout=60,
+                            )
+                            if response.status_code == 200:
+                                ai_response = response.json()["choices"][0]["message"][
+                                    "content"
+                                ]
+                            else:
+                                ai_response = (
+                                    f"Error: {response.status_code} - {response.text}"
+                                )
+
+                    except Exception as e:
+                        ai_response = f"Error: {str(e)}"
+
+                    st.write(ai_response)
+                    st.session_state.ai_messages.append(
+                        {"role": "assistant", "content": ai_response}
                     )
-                    if not result.startswith("Error"):
-                        st.session_state.data["projects"][idx]["description"] = result
+
+                    if "[CHANGED]" in ai_response:
+                        import re
+
+                        bio_match = re.search(
+                            r"\[CHANGED\]\s*bio:\s*(.+?)\s*\[/CHANGED\]",
+                            ai_response,
+                            re.DOTALL,
+                        )
+                        if bio_match:
+                            st.session_state.data["bio"] = bio_match.group(1).strip()
+
+                        name_match = re.search(
+                            r"\[CHANGED\]\s*name:\s*(.+?)\s*\[/CHANGED\]",
+                            ai_response,
+                            re.DOTALL,
+                        )
+                        if name_match:
+                            st.session_state.data["name"] = name_match.group(1).strip()
+
+                        title_match = re.search(
+                            r"\[CHANGED\]\s*title:\s*(.+?)\s*\[/CHANGED\]",
+                            ai_response,
+                            re.DOTALL,
+                        )
+                        if title_match:
+                            st.session_state.data["title"] = title_match.group(
+                                1
+                            ).strip()
+
+                        location_match = re.search(
+                            r"\[CHANGED\]\s*location:\s*(.+?)\s*\[/CHANGED\]",
+                            ai_response,
+                            re.DOTALL,
+                        )
+                        if location_match:
+                            st.session_state.data["location"] = location_match.group(
+                                1
+                            ).strip()
+
+                        template_match = re.search(
+                            r"\[CHANGED\]\s*template:\s*(.+?)\s*\[/CHANGED\]",
+                            ai_response,
+                            re.DOTALL,
+                        )
+                        if template_match:
+                            st.session_state.data["template"] = template_match.group(
+                                1
+                            ).strip()
+
+                        color_match = re.search(
+                            r"\[CHANGED\]\s*color:\s*(.+?)\s*\[/CHANGED\]",
+                            ai_response,
+                            re.DOTALL,
+                        )
+                        if color_match:
+                            st.session_state.data["color"] = color_match.group(
+                                1
+                            ).strip()
+
+                        project_desc_match = re.findall(
+                            r"\[CHANGED\]\s*project_(\d+)_description:\s*(.+?)\s*\[/CHANGED\]",
+                            ai_response,
+                            re.DOTALL,
+                        )
+                        for idx, desc in project_desc_match:
+                            idx = int(idx)
+                            if idx < len(st.session_state.data["projects"]):
+                                st.session_state.data["projects"][idx][
+                                    "description"
+                                ] = desc.strip()
+
+                        project_name_match = re.findall(
+                            r"\[CHANGED\]\s*project_(\d+)_name:\s*(.+?)\s*\[/CHANGED\]",
+                            ai_response,
+                            re.DOTALL,
+                        )
+                        for idx, name in project_name_match:
+                            idx = int(idx)
+                            if idx < len(st.session_state.data["projects"]):
+                                st.session_state.data["projects"][idx]["name"] = (
+                                    name.strip()
+                                )
+
+                        add_project_match = re.search(
+                            r"\[CHANGED\]\s*add_project:\s*(.+?)\s*\[/CHANGED\]",
+                            ai_response,
+                            re.DOTALL,
+                        )
+                        if add_project_match:
+                            try:
+                                project_data = json.loads(add_project_match.group(1))
+                                st.session_state.data["projects"].append(project_data)
+                            except:
+                                pass
+
+                        st.success("✅ Portfolio bylo aktualizováno!")
                         st.rerun()
-                    else:
-                        st.error(result)
+
+        if st.button("🗑️ Vymazat konverzaci", use_container_width=True):
+            st.session_state.ai_messages = []
+            st.rerun()
+    else:
+        st.info("💡 Pro použití AI chatu zadejte API key výše.")
 
 tab1, tab2, tab3 = st.tabs(["📝 Profil", "🚀 Projekty", "🎭 Design"])
 
